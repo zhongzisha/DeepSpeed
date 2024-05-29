@@ -134,6 +134,7 @@ class AsyncPartitionedParameterSwapper(object):
         return paths[0]
 
     def _get_swap_paths(self, params, must_exist=False):
+        print_rank_0("BEGIN _get_swap_paths")
         paths = []
         for param in params:
             param_id = param.ds_id
@@ -146,6 +147,7 @@ class AsyncPartitionedParameterSwapper(object):
                 self.id_to_path[param_id] = param_path
             paths.append(param_path)
 
+        print_rank_0("END _get_swap_paths")
         return paths
 
     def _get_swap_buffers(self, params):

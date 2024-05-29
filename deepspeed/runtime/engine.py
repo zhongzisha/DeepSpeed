@@ -2762,13 +2762,14 @@ class DeepSpeedEngine(Module):
                                                          custom_load_fn=custom_load_fn)
 
         load_zero_checkpoint = load_path is not None and (self.zero_optimization() or self.bfloat16_enabled())
-        if load_zero_checkpoint:
-            if (load_optimizer_states and not load_module_only) or self.load_universal_checkpoint():
-                success = self._load_zero_checkpoint(load_dir, tag, load_optimizer_states=load_optimizer_states)
-            else:
-                success = False
-            if not success:
-                self.optimizer._restore_from_bit16_weights()
+        logger.info(f'load_dir: {load_dir}')
+        logger.info(f'load_path: {load_path}')
+        offload_dir = self.optimizer.optimizer_swapper.swap_folder
+        offload_ckpt_dir = os.path.join(load_dir, tag, "offloaded_tensors")
+        logger.info(f'offload_dir: {offload_dir}')
+        logger.info(f'offload_ckpt_dir: {offload_ckpt_dir}')
+        os.system('ls -alth "{}"'.format(offload_dir))
+        logger.debug("check offload_dir")
 
         if self.zero_has_nvme_offload():
             from shutil import copytree, disk_usage
@@ -2781,6 +2782,30 @@ class DeepSpeedEngine(Module):
             copytree(offload_ckpt_dir, offload_dir, dirs_exist_ok=True)
             _, _, free = disk_usage(offload_dir)
             logger.info(f"Copying complete! {free / 1e9:,.2f} GB free on target filesystem")
+            os.system('ls -alth "{}"'.format(offload_dir))
+            logger.debug("check offload_dir")
+            
+        if load_zero_checkpoint:
+            if (load_optimizer_states and not load_module_only) or self.load_universal_checkpoint():
+                success = self._load_zero_checkpoint(load_dir, tag, load_optimizer_states=load_optimizer_states)
+            else:
+                success = False
+            if not success:
+                self.optimizer._restore_from_bit16_weights()
+
+        if self.zero_has_nvme_offload():
+            # from shutil import copytree, disk_usage
+            # offload_dir = self.optimizer.optimizer_swapper.swap_folder
+            # offload_ckpt_dir = os.path.join(load_dir, tag, "offloaded_tensors")
+            # _, _, free = disk_usage(offload_dir)
+            # logger.info(
+            #     f"Copying NVMe offload checkpoint from {offload_ckpt_dir} to {offload_dir}, {free / 1e9:,.2f} GB free on target filesystem..."
+            # )
+            # copytree(offload_ckpt_dir, offload_dir, dirs_exist_ok=True)
+            # _, _, free = disk_usage(offload_dir)
+            # logger.info(f"Copying complete! {free / 1e9:,.2f} GB free on target filesystem")
+            # os.system('ls -alth "{}"'.format(offload_dir))
+            # logger.debug("check offload_dir")
             self.optimizer.reset_swap_buffers()
 
         if self._optimizer_has_ckpt_event_epilogue():
@@ -2803,12 +2828,17 @@ class DeepSpeedEngine(Module):
         from deepspeed.runtime.state_dict_factory import SDLoaderFactory
 
         ckpt_list = self._get_all_ckpt_names(load_dir, tag)
+        logger.info(f'load_dir: {load_dir}')
+        logger.info(f'tag: {tag}')
+        logger.info(f'ckpt_list: {ckpt_list}')
         sd_loader = SDLoaderFactory.get_sd_loader(ckpt_list, checkpoint_engine=self.checkpoint_engine)
 
         is_pipe_parallel = isinstance(self.module, PipelineModule)
 
         mp_rank = 0 if self.mpu is None else self.mpu.get_model_parallel_rank()
         load_path, checkpoint, _ = sd_loader.load(self.mp_world_size, mp_rank, is_pipe_parallel=is_pipe_parallel)
+        logger.info(f'load_path: {load_path}')
+        # logger.info(f'checkpoint: {checkpoint}')
 
         if checkpoint is None:
             return None, None
@@ -2950,9 +2980,12 @@ class DeepSpeedEngine(Module):
                     "currently supported.")
             checkpoint_folder = None
             zero_sd_list = self._get_all_zero_checkpoints(load_dir, tag)
+            logger.info(f'zero_sd_list: {zero_sd_list}')
             if zero_sd_list is None:
                 return False
 
+        logger.info(f'_load_zero_checkpoint checkpoint_folder: {checkpoint_folder}')
+        logger.info(f'_load_zero_checkpoint optimizer: {self.optimizer}')
         self.optimizer.load_state_dict(state_dict_list=zero_sd_list,
                                        load_optimizer_states=load_optimizer_states,
                                        load_from_fp32_weights=self.zero_load_from_fp32_weights(),
@@ -3010,7 +3043,8 @@ class DeepSpeedEngine(Module):
             else:
                 _state = {OPTIMIZER_STATE_DICT: None}
             zero_sd_list.append(_state)
-
+        
+        logger.info(f'_get_all_zero_checkpoint_state_dicts zero_sd_list: {zero_sd_list}')
         zero_optimizer_sd = [sd[OPTIMIZER_STATE_DICT] for sd in zero_sd_list]
         logger.info(f"successfully read {len(zero_optimizer_sd)} ZeRO state_dicts for rank {self.global_rank}")
         return zero_optimizer_sd
@@ -3018,6 +3052,7 @@ class DeepSpeedEngine(Module):
     def _get_all_zero_checkpoints(self, load_dir, tag):
         for bf16_mode in [self.bfloat16_enabled(), not self.bfloat16_enabled()]:
             zero_ckpt_names = self._get_all_zero_checkpoint_names(load_dir, tag, bf16_mode)
+            logger.info(f'_get_all_zero_checkpoints zero_ckpt_names: {zero_ckpt_names}')
             if zero_ckpt_names is not None:
                 # Warn if loading checkpoint of different bit16 type
                 if bf16_mode is not self.bfloat16_enabled():
@@ -3119,7 +3154,7 @@ class DeepSpeedEngine(Module):
             copytree(offload_dir,
                      offload_ckpt_dir,
                      ignore=lambda _, dir_list: list(filter(lambda x: 'gradient' in x, dir_list)),
-                     dirs_exist_ok=False)
+                     dirs_exist_ok=True)
             _, _, free = disk_usage(save_dir)
             logger.info(f"Copying complete! {free / 1e9:,.2f} GB free on target filesystem")
 
